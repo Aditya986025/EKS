@@ -6,7 +6,7 @@ provider "aws" {
 # IAM ROLE FOR EKS CLUSTER
 ############################
 resource "aws_iam_role" "eks_role" {
-  name = "eks-terraform"
+  name = "eks-terraform-1"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
