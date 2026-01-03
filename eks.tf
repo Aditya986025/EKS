@@ -2,11 +2,25 @@ provider "aws" {
   region = "eu-north-1"
 }
 
-############################
+################################
+# DEFAULT VPC & SUBNETS
+################################
+data "aws_vpc" "default" {
+  default = true
+}
+
+data "aws_subnets" "default" {
+  filter {
+    name   = "vpc-id"
+    values = [data.aws_vpc.default.id]
+  }
+}
+
+################################
 # IAM ROLE FOR EKS CLUSTER
-############################
-resource "aws_iam_role" "eks_role" {
-  name = "eks-terraform-1"
+################################
+resource "aws_iam_role" "eks_cluster_role" {
+  name = "eks-cluster-role-my-cluster"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -21,38 +35,21 @@ resource "aws_iam_role" "eks_role" {
 }
 
 resource "aws_iam_role_policy_attachment" "eks_cluster_policy" {
-  role       = aws_iam_role.eks_role.name
+  role       = aws_iam_role.eks_cluster_role.name
   policy_arn = "arn:aws:iam::aws:policy/AmazonEKSClusterPolicy"
 }
 
-############################
-# NETWORK
-############################
-data "aws_vpc" "default_vpc" {
-  default = true
-}
-
-data "aws_subnets" "default_subnets" {
-  filter {
-    name   = "vpc-id"
-    values = [data.aws_vpc.default_vpc.id]
-  }
-}
-
-############################
+################################
 # EKS CLUSTER
-############################
-resource "aws_eks_cluster" "eks_cluster" {
+################################
+resource "aws_eks_cluster" "eks" {
   name     = "my-cluster"
-  role_arn = aws_iam_role.eks_role.arn
+  role_arn = aws_iam_role.eks_cluster_role.arn
   version  = "1.34"
 
-  access_config {
-    authentication_mode = "API"
-  }
-
   vpc_config {
-    subnet_ids = data.aws_subnets.default_subnets.ids
+    subnet_ids              = data.aws_subnets.default.ids
+    endpoint_public_access  = true
   }
 
   depends_on = [
@@ -60,11 +57,11 @@ resource "aws_eks_cluster" "eks_cluster" {
   ]
 }
 
-############################
-# IAM ROLE FOR NODE GROUP
-############################
-resource "aws_iam_role" "eks_node_role" {
-  name = "eks-node-role-terraform-1"
+################################
+# IAM ROLE FOR WORKER NODES
+################################
+resource "aws_iam_role" "node_role" {
+  name = "eks-node-role-my-cluster"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -78,30 +75,30 @@ resource "aws_iam_role" "eks_node_role" {
   })
 }
 
-resource "aws_iam_role_policy_attachment" "node_worker_policy" {
-  role       = aws_iam_role.eks_node_role.name
+resource "aws_iam_role_policy_attachment" "worker_node_policy" {
+  role       = aws_iam_role.node_role.name
   policy_arn = "arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy"
 }
 
-resource "aws_iam_role_policy_attachment" "node_cni_policy" {
-  role       = aws_iam_role.eks_node_role.name
+resource "aws_iam_role_policy_attachment" "cni_policy" {
+  role       = aws_iam_role.node_role.name
   policy_arn = "arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy"
 }
 
-resource "aws_iam_role_policy_attachment" "node_ecr_policy" {
-  role       = aws_iam_role.eks_node_role.name
+resource "aws_iam_role_policy_attachment" "ecr_policy" {
+  role       = aws_iam_role.node_role.name
   policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
 }
 
-############################
+################################
 # NODE GROUP
-############################
-resource "aws_eks_node_group" "eks_node_group" {
-  cluster_name    = aws_eks_cluster.eks_cluster.name
+################################
+resource "aws_eks_node_group" "nodes" {
+  cluster_name    = aws_eks_cluster.eks.name
   node_group_name = "eks-node-group-1"
-  node_role_arn   = aws_iam_role.eks_node_role.arn
+  node_role_arn   = aws_iam_role.node_role.arn
 
-  subnet_ids     = data.aws_subnets.default_subnets.ids
+  subnet_ids     = data.aws_subnets.default.ids
   instance_types = ["m7i-flex.large"]
 
   scaling_config {
@@ -110,32 +107,10 @@ resource "aws_eks_node_group" "eks_node_group" {
     max_size     = 3
   }
 
-  update_config {
-    max_unavailable = 1
-  }
-
   depends_on = [
-    aws_iam_role_policy_attachment.node_worker_policy,
-    aws_iam_role_policy_attachment.node_cni_policy,
-    aws_iam_role_policy_attachment.node_ecr_policy
+    aws_eks_cluster.eks,
+    aws_iam_role_policy_attachment.worker_node_policy,
+    aws_iam_role_policy_attachment.cni_policy,
+    aws_iam_role_policy_attachment.ecr_policy
   ]
-}
-
-############################
-# 🔐 EKS ACCESS ENTRY (ADMIN)
-############################
-resource "aws_eks_access_entry" "admin_root" {
-  cluster_name  = aws_eks_cluster.eks_cluster.name
-  principal_arn = "arn:aws:iam::775525057193:root"
-  type          = "STANDARD"
-}
-
-resource "aws_eks_access_policy_association" "admin_root_policy" {
-  cluster_name  = aws_eks_cluster.eks_cluster.name
-  principal_arn = "arn:aws:iam::775525057193:root"
-  policy_arn   = "arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy"
-
-  access_scope {
-    type = "cluster"
-  }
 }
